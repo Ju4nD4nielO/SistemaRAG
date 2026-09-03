@@ -54,12 +54,7 @@ def create_client() -> OpenAI:
 
 
 def answer_question(client: OpenAI, faq_context: str, question: str) -> str:
-    """
-    Implementación del RAG simple:
-    - Retrieval: cargamos el documento FAQ desde el file system.
-    - Augmentation: lo agregamos al prompt como contexto.
-    - Generation: el modelo genera la respuesta basándose únicamente en ese contexto.
-    """
+    
     response = client.chat.completions.create(
         model="openai/gpt-oss-20b",
         temperature=0,
