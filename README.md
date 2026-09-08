@@ -1,94 +1,81 @@
-Parachute S.A. - Agente FAQ con RAG simple
-Demo para implementar un agente básico de preguntas frecuentes para
-Parachute S.A. utilizando una arquitectura RAG simple y una API compatible
-con el esquema de OpenAI.
-Arquitectura
-El proyecto utiliza la versión más sencilla de RAG solicitada en la hoja:
-Retrieval: se carga el archivo `FAQs_Parachute_SA_Guatemala_2026.txt`
-desde el sistema de archivos.
-Augmentation: el contenido completo del archivo se inyecta como
-contexto en la solicitud al modelo.
-Generation: el modelo responde utilizando únicamente ese contexto.
-No se utiliza una base vectorial porque el enunciado solicita explícitamente
-una arquitectura simple para un demo.
-Tecnologías
-Python
-OpenAI Python SDK
-Groq como proveedor del modelo
-`python-dotenv` para manejar la API Key
-Modelo `openai/gpt-oss-20b`
-Groq ofrece compatibilidad con el cliente de OpenAI cambiando el `base_url`
-a `https://api.groq.com/openai/v1`.
-Instalación
-Se recomienda Python 3.10+.
+
+
+
+## Infraestructura (PostgreSQL + pgvector)
+
+### 1. Levantar el contenedor
+
 ```bash
-python -m venv .venv
+docker compose up -d
 ```
-Windows
-```bash
-.venv\Scripts\activate
-```
-Linux / macOS
-```bash
-source .venv/bin/activate
-```
-Instalar dependencias:
-```bash
-pip install -r requirements.txt
-```
-Configuración de la API Key
-Copia `.env.example` como `.env`:
-```bash
-copy .env.example .env
-```
-En Linux/macOS:
+
+(o `podman-compose up -d` si usan Podman)
+
+Esto levanta Postgres 16 con la extensión `pgvector` ya instalada
+(imagen `pgvector/pgvector:pg16`) y corre automáticamente `init.sql`
+la primera vez, creando la extensión `vector` y la tabla `faqs`.
+
+> Si ya tenían un contenedor de Postgres corriendo de antes (volumen
+> ya inicializado), `init.sql` no se vuelve a ejecutar solo. En ese
+> caso corran a mano:
+> ```bash
+> docker exec -i parachute_pgvector psql -U parachute -d parachute_faqs < init.sql
+> ```
+
+### 2. Configurar variables de entorno
+
+Copien `.env.example` a `.env` y ajusten si es necesario (los valores
+por defecto ya coinciden con `docker-compose.yml`):
+
 ```bash
 cp .env.example .env
 ```
-Luego coloca tu API Key:
-```env
-GROQ_API_KEY=tu_api_key_aqui
-```
-Nunca subas `.env` al repositorio. Ya está incluido en `.gitignore`.
-Ejecutar
+
+### 3. Instalar dependencias de Python
+
 ```bash
-python main.py
+pip install -r requirements.txt
 ```
-El programa permanecerá en un loop permitiendo realizar múltiples preguntas.
-Para terminar:
-```text
-Bye
+
+### 4. Cargar los FAQs a la base de datos
+
+```bash
+python load_faqs.py Corpus_FAQs_Parachute_SA_2026.txt
 ```
-o presiona:
-```text
-Ctrl-C
+
+El script:
+1. Parsea el corpus (120 FAQs, delimitadas por bloques `ID:` / `CATEGORÍA:` / `PREGUNTA:` / `RESPUESTA:` / `METADATA:`).
+2. Genera un embedding de 384 dimensiones por FAQ con `sentence-transformers` (`all-MiniLM-L6-v2`), sobre el texto de la pregunta + respuesta.
+3. Hace un `UPSERT` a la tabla `faqs` en Postgres (se puede correr varias veces sin duplicar filas).
+
+Para confirmar que cargó bien:
+
+```bash
+docker exec -it parachute_pgvector psql -U parachute -d parachute_faqs -c "SELECT count(*) FROM faqs;"
 ```
-Ejemplos para la demostración
-Preguntas que sí están en las FAQs:
-```text
-¿Cuándo y dónde se realizará el evento?
-¿Qué peso máximo puedo tener para saltar?
-¿Necesito experiencia previa?
-¿Qué métodos de pago aceptan?
-¿Qué ropa debo llevar?
-¿Cuánto dura la experiencia completa?
+
+Debería devolver `120`.
+
+### Esquema de la tabla
+
+```sql
+faqs (
+    id          TEXT PRIMARY KEY,   -- "FAQ-001", "FAQ-002", ...
+    categoria   TEXT NOT NULL,
+    pregunta    TEXT NOT NULL,
+    respuesta   TEXT NOT NULL,
+    metadata    JSONB,
+    embedding   VECTOR(384) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+)
 ```
-Pregunta que no está en las FAQs:
-```text
-¿Cuánto cuesta el boleto?
-```
-El agente debe reconocer que esa información no está disponible y no
-inventar un precio.
-Seguridad
-La API Key se obtiene mediante la variable de entorno `GROQ_API_KEY`.
-No se almacena en el código fuente ni en el repositorio.
-Estructura
-```text
-parachute-rag/
-├── FAQs_Parachute_SA_Guatemala_2026.txt
-├── main.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+
+Índice `ivfflat` sobre `embedding` con distancia coseno, listo para que
+el agente (Persona 2) haga consultas del estilo:
+
+```sql
+SELECT id, categoria, pregunta, respuesta
+FROM faqs
+ORDER BY embedding <=> %s::vector
+LIMIT 3;
 ```
