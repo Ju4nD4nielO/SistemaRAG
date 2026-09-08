@@ -1,0 +1,168 @@
+"""
+Script de carga (Persona 1 - HDT4).
+
+Lee el corpus de FAQs de Parachute S.A., genera un embedding por cada
+FAQ (pregunta + respuesta) con sentence-transformers, y hace un
+UPSERT a la tabla `faqs` en PostgreSQL/pgvector.
+
+Uso:
+    python load_faqs.py [ruta_al_corpus.txt]
+
+Si no se pasa ruta, usa "Corpus_FAQs_Parachute_SA_2026.txt" en el
+mismo directorio.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_CORPUS = BASE_DIR / "Corpus_FAQs_Parachute_SA_2026.txt"
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"  # 384 dimensiones
+
+# Cada FAQ viene separada por una línea de guiones (>= 10 seguidos)
+BLOCK_SEPARATOR = re.compile(r"^-{10,}\s*$", re.MULTILINE)
+
+FIELD_PATTERN = re.compile(
+    r"ID:\s*(?P<id>.+?)\s*\n"
+    r"CATEGOR[ÍI]A:\s*(?P<categoria>.+?)\s*\n"
+    r"PREGUNTA:\s*(?P<pregunta>.+?)\s*\n"
+    r"RESPUESTA:\s*(?P<respuesta>.+?)\s*\n"
+    r"METADATA:\s*(?P<metadata>\{.*\})\s*$",
+    re.DOTALL,
+)
+
+
+@dataclass
+class Faq:
+    id: str
+    categoria: str
+    pregunta: str
+    respuesta: str
+    metadata: dict
+
+
+def parse_corpus(path: Path) -> list[Faq]:
+    """Parsea el .txt de FAQs en una lista de objetos Faq."""
+    text = path.read_text(encoding="utf-8")
+    raw_blocks = [b.strip() for b in BLOCK_SEPARATOR.split(text) if b.strip()]
+
+    faqs: list[Faq] = []
+    for block in raw_blocks:
+        match = FIELD_PATTERN.search(block)
+        if not match:
+            # Bloque no reconocible (p.ej. el encabezado del archivo con "="),
+            # lo ignoramos en vez de tronar la carga completa.
+            continue
+
+        data = match.groupdict()
+        try:
+            metadata = json.loads(data["metadata"])
+        except json.JSONDecodeError:
+            metadata = {}
+
+        faqs.append(
+            Faq(
+                id=data["id"].strip(),
+                categoria=data["categoria"].strip(),
+                pregunta=data["pregunta"].strip(),
+                respuesta=data["respuesta"].strip(),
+                metadata=metadata,
+            )
+        )
+
+    return faqs
+
+
+def get_connection():
+    load_dotenv()
+    return psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.getenv("POSTGRES_DB", "parachute_faqs"),
+        user=os.getenv("POSTGRES_USER", "parachute"),
+        password=os.getenv("POSTGRES_PASSWORD", "parachute"),
+    )
+
+
+def _to_pgvector_literal(embedding) -> str:
+    """Convierte un array de floats al formato de texto que pgvector espera: '[0.1,0.2,...]'."""
+    return "[" + ",".join(f"{value:.8f}" for value in embedding) + "]"
+
+
+def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
+    # Se castea explícitamente a ::vector porque psycopg2 no tiene un adaptador
+    # nativo para el tipo `vector` de pgvector (evita depender del paquete extra
+    # `pgvector` solo para esto).
+    upsert_sql = """
+        INSERT INTO faqs (id, categoria, pregunta, respuesta, metadata, embedding)
+        VALUES (%s, %s, %s, %s, %s, %s::vector)
+        ON CONFLICT (id) DO UPDATE SET
+            categoria = EXCLUDED.categoria,
+            pregunta  = EXCLUDED.pregunta,
+            respuesta = EXCLUDED.respuesta,
+            metadata  = EXCLUDED.metadata,
+            embedding = EXCLUDED.embedding;
+    """
+    rows = [
+        (
+            faq.id,
+            faq.categoria,
+            faq.pregunta,
+            faq.respuesta,
+            json.dumps(faq.metadata, ensure_ascii=False),
+            _to_pgvector_literal(embedding),
+        )
+        for faq, embedding in zip(faqs, embeddings)
+    ]
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, upsert_sql, rows)
+    conn.commit()
+
+
+def main() -> None:
+    corpus_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CORPUS
+
+    if not corpus_path.exists():
+        print(f"No se encontró el archivo de corpus: {corpus_path}")
+        sys.exit(1)
+
+    print(f"Parseando corpus: {corpus_path.name}")
+    faqs = parse_corpus(corpus_path)
+    print(f"  -> {len(faqs)} FAQs encontradas")
+
+    if not faqs:
+        print("No se encontraron FAQs válidas en el archivo. Abortando.")
+        sys.exit(1)
+
+    print(f"Cargando modelo de embeddings: {EMBEDDING_MODEL_NAME}")
+    model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+
+    # Se embebe pregunta + respuesta para que la búsqueda capture tanto la
+    # intención de la pregunta como el contenido real de la respuesta.
+    textos = [f"{faq.pregunta}\n{faq.respuesta}" for faq in faqs]
+    print("Generando embeddings...")
+    embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
+
+    print("Conectando a PostgreSQL...")
+    conn = get_connection()
+    try:
+        upsert_faqs(conn, faqs, embeddings)
+        print(f"Carga completa: {len(faqs)} FAQs insertadas/actualizadas en la tabla 'faqs'.")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()
