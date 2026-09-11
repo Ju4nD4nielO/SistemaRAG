@@ -15,21 +15,22 @@ mismo directorio.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+
+from parachute_vector_store import (
+    EMBEDDING_MODEL_NAME,
+    connect_to_faq_store,
+    to_pgvector_literal,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CORPUS = BASE_DIR / "Corpus_FAQs_Parachute_SA_2026.txt"
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"  # 384 dimensiones
-
 # Cada FAQ viene separada por una línea de guiones (>= 10 seguidos)
 BLOCK_SEPARATOR = re.compile(r"^-{10,}\s*$", re.MULTILINE)
 
@@ -84,22 +85,6 @@ def parse_corpus(path: Path) -> list[Faq]:
     return faqs
 
 
-def get_connection():
-    load_dotenv()
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
-        dbname=os.getenv("POSTGRES_DB", "parachute_faqs"),
-        user=os.getenv("POSTGRES_USER", "parachute"),
-        password=os.getenv("POSTGRES_PASSWORD", "parachute"),
-    )
-
-
-def _to_pgvector_literal(embedding) -> str:
-    """Convierte un array de floats al formato de texto que pgvector espera: '[0.1,0.2,...]'."""
-    return "[" + ",".join(f"{value:.8f}" for value in embedding) + "]"
-
-
 def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
     # Se castea explícitamente a ::vector porque psycopg2 no tiene un adaptador
     # nativo para el tipo `vector` de pgvector (evita depender del paquete extra
@@ -121,7 +106,7 @@ def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
             faq.pregunta,
             faq.respuesta,
             json.dumps(faq.metadata, ensure_ascii=False),
-            _to_pgvector_literal(embedding),
+            to_pgvector_literal(embedding),
         )
         for faq, embedding in zip(faqs, embeddings)
     ]
@@ -156,7 +141,7 @@ def main() -> None:
     embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
 
     print("Conectando a PostgreSQL...")
-    conn = get_connection()
+    conn = connect_to_faq_store()
     try:
         upsert_faqs(conn, faqs, embeddings)
         print(f"Carga completa: {len(faqs)} FAQs insertadas/actualizadas en la tabla 'faqs'.")
