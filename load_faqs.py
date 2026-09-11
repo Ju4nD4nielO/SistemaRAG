@@ -24,6 +24,7 @@ import psycopg2.extras
 from sentence_transformers import SentenceTransformer
 
 from parachute_vector_store import (
+    EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL_NAME,
     connect_to_faq_store,
     to_pgvector_literal,
@@ -99,6 +100,11 @@ def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
             metadata  = EXCLUDED.metadata,
             embedding = EXCLUDED.embedding;
     """
+    if len(faqs) != len(embeddings):
+        raise ValueError(
+            "La cantidad de embeddings no coincide con la cantidad de FAQs."
+        )
+
     rows = [
         (
             faq.id,
@@ -130,6 +136,9 @@ def main() -> None:
     if not faqs:
         print("No se encontraron FAQs válidas en el archivo. Abortando.")
         sys.exit(1)
+    if len({faq.id for faq in faqs}) != len(faqs):
+        print("El corpus contiene IDs de FAQ duplicados. Abortando.")
+        sys.exit(1)
 
     print(f"Cargando modelo de embeddings: {EMBEDDING_MODEL_NAME}")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
@@ -139,6 +148,12 @@ def main() -> None:
     textos = [f"{faq.pregunta}\n{faq.respuesta}" for faq in faqs]
     print("Generando embeddings...")
     embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
+    if len(embeddings[0]) != EMBEDDING_DIMENSIONS:
+        print(
+            "El modelo generó embeddings con una dimensión inesperada: "
+            f"{len(embeddings[0])} (se esperaban {EMBEDDING_DIMENSIONS})."
+        )
+        sys.exit(1)
 
     print("Conectando a PostgreSQL...")
     conn = connect_to_faq_store()

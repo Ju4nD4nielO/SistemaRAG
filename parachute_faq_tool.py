@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from typing import TYPE_CHECKING, Any
 
 from parachute_vector_store import (
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 
 DEFAULT_RESULT_COUNT = 5
 MAX_RESULT_COUNT = 10
+# Una búsqueda vectorial siempre devuelve vecinos, incluso para preguntas que
+# no pertenecen al corpus. Este umbral evita presentar esos vecinos como
+# evidencia. Se puede ajustar sin cambiar código al evaluar el corpus.
+DEFAULT_MAX_COSINE_DISTANCE = 0.65
 
 FAQ_SEARCH_SQL = """
     SELECT
@@ -87,6 +92,25 @@ def _validate_search(pregunta: str, k: int) -> tuple[str, int]:
     return pregunta.strip(), k
 
 
+def _get_max_cosine_distance() -> float:
+    """Obtiene y valida el umbral de relevancia configurado para el corpus."""
+    raw_value = os.getenv(
+        "FAQ_MAX_COSINE_DISTANCE",
+        str(DEFAULT_MAX_COSINE_DISTANCE),
+    )
+    try:
+        threshold = float(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            "FAQ_MAX_COSINE_DISTANCE debe ser un número entre 0 y 2."
+        ) from error
+
+    if not 0 <= threshold <= 2:
+        raise ValueError("FAQ_MAX_COSINE_DISTANCE debe estar entre 0 y 2.")
+
+    return threshold
+
+
 def _embed_question(pregunta: str) -> str:
     embedding = _get_embedding_model().encode(
         pregunta,
@@ -99,19 +123,28 @@ def buscar_faq(
     pregunta: str,
     k: int = DEFAULT_RESULT_COUNT,
 ) -> dict[str, Any]:
-    """Recupera las FAQs más cercanas a ``pregunta`` mediante distancia coseno."""
+    """Recupera evidencia relevante mediante distancia coseno.
+
+    Las coincidencias que superan el umbral de distancia no se devuelven como
+    fuentes: de otro modo el modelo podría contestar una pregunta ajena usando
+    el FAQ vectorialmente menos lejano.
+    """
     pregunta, k = _validate_search(pregunta, k)
+    max_cosine_distance = _get_max_cosine_distance()
     query_vector = _embed_question(pregunta)
 
     connection = connect_to_faq_store()
     try:
         with connection.cursor() as cursor:
+            # Para el corpus actual (120 filas) esto conserva un recall alto
+            # incluso si PostgreSQL elige el índice ivfflat.
+            cursor.execute("SET LOCAL ivfflat.probes = 10;")
             cursor.execute(FAQ_SEARCH_SQL, (query_vector, query_vector, k))
             rows = cursor.fetchall()
     finally:
         connection.close()
 
-    resultados = [
+    candidatos = [
         {
             "id": faq_id,
             "categoria": categoria,
@@ -121,9 +154,16 @@ def buscar_faq(
         }
         for faq_id, categoria, pregunta_faq, respuesta, distancia in rows
     ]
+    resultados = [
+        resultado
+        for resultado in candidatos
+        if resultado["distancia_coseno"] <= max_cosine_distance
+    ]
 
     return {
         "consulta": pregunta,
         "cantidad": len(resultados),
+        "informacion_suficiente": bool(resultados),
+        "umbral_distancia_coseno": max_cosine_distance,
         "resultados": resultados,
     }
