@@ -33,6 +33,8 @@ REGLAS OBLIGATORIAS:
    `resultados` como fuente factual. No agregues datos que no aparezcan allí.
 3. Si la herramienta indica `informacion_suficiente: false` o no hay
    resultados, responde exactamente: "{UNSUPPORTED_ANSWER}"
+   Si indica `informacion_suficiente: true`, debes responder con la evidencia
+   recuperada y NUNCA usar ese mensaje de rechazo por decisión propia.
 4. Si una pregunta tiene varias partes, responde solo las que estén respaldadas
    por los resultados. Indica claramente que las demás no están contempladas.
 5. No inventes precios, horarios, políticas, ubicaciones, teléfonos, correos
@@ -109,6 +111,25 @@ def _run_tool_call(tool_call: Any) -> dict[str, Any]:
         }
 
 
+def _retrieved_fallback(tool_results: list[dict[str, Any]]) -> str:
+    """Devuelve la respuesta de la evidencia más cercana como último recurso.
+
+    El modelo solo redacta la respuesta. Si contradice el indicador explícito
+    de la herramienta y rechaza una entrada recuperada, no se debe ocultar la
+    evidencia válida al usuario.
+    """
+    results = [
+        item
+        for tool_result in tool_results
+        for item in tool_result.get("resultados", [])
+        if isinstance(item.get("respuesta"), str) and item["respuesta"].strip()
+    ]
+    if not results:
+        return UNSUPPORTED_ANSWER
+    closest = min(results, key=lambda item: item.get("distancia_coseno", float("inf")))
+    return closest["respuesta"].strip()
+
+
 def answer_question(
     client: OpenAI,
     question: str,
@@ -164,8 +185,12 @@ def answer_question(
 
     content = final_response.choices[0].message.content
     if not content:
-        raise RuntimeError("El modelo no devolvió una respuesta final.")
-    return content.strip()
+        return _retrieved_fallback(tool_results)
+
+    answer = content.strip()
+    if answer == UNSUPPORTED_ANSWER:
+        return _retrieved_fallback(tool_results)
+    return answer
 
 
 def _print_tool_trace(name: str, result: dict[str, Any]) -> None:

@@ -64,8 +64,8 @@ pip install -r requirements.txt
 ```
 
 La primera ejecución de `sentence-transformers` puede descargar el modelo
-`all-MiniLM-L6-v2`; por eso requiere conexión a internet una sola vez, salvo
-que el modelo ya esté en caché.
+multilingüe `paraphrase-multilingual-MiniLM-L12-v2`; por eso requiere conexión
+a internet una sola vez, salvo que el modelo ya esté en caché.
 
 ### 4. Cargar los FAQs a la base de datos
 
@@ -73,9 +73,16 @@ que el modelo ya esté en caché.
 python load_faqs.py Corpus_FAQs_Parachute_SA_2026.txt
 ```
 
+Si ya habían cargado la base con una versión anterior del proyecto, ejecuten
+este comando nuevamente: el UPSERT reemplaza los embeddings existentes por los
+del modelo multilingüe y no duplica filas.
+
 El script:
 1. Parsea el corpus (120 FAQs, delimitadas por bloques `ID:` / `CATEGORÍA:` / `PREGUNTA:` / `RESPUESTA:` / `METADATA:`).
-2. Genera un embedding de 384 dimensiones por FAQ con `sentence-transformers` (`all-MiniLM-L6-v2`), sobre el texto de la pregunta + respuesta.
+2. Genera un embedding de 384 dimensiones por FAQ con `sentence-transformers`
+   (`paraphrase-multilingual-MiniLM-L12-v2`) a partir de la pregunta. Se eligió
+   este modelo multilingüe porque las consultas y el corpus están en español;
+   evita que las respuestas repetitivas del dump distorsionen la búsqueda.
 3. Hace un `UPSERT` a la tabla `faqs` en Postgres (se puede correr varias veces sin duplicar filas).
 
 Para confirmar que cargó bien:

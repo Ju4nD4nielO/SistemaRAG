@@ -127,6 +127,25 @@ class ToolCallingTests(unittest.TestCase):
         self.assertEqual(answer, main.UNSUPPORTED_ANSWER)
         self.assertEqual(self.completions.call_count, 2)
 
+    @patch("main.buscar_faq")
+    def test_uses_retrieved_answer_if_model_rejects_valid_evidence(self, mock_search) -> None:
+        self.final_message.content = main.UNSUPPORTED_ANSWER
+        mock_search.return_value = {
+            "informacion_suficiente": True,
+            "cantidad": 1,
+            "resultados": [
+                {
+                    "id": "FAQ-003",
+                    "respuesta": "Hay parqueo disponible en el evento.",
+                    "distancia_coseno": 0.1,
+                }
+            ],
+        }
+
+        answer = main.answer_question(self.client, "¿Hay estacionamiento?")
+
+        self.assertEqual(answer, "Hay parqueo disponible en el evento.")
+
 
 if __name__ == "__main__":
     unittest.main()

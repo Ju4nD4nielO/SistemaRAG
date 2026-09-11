@@ -8,7 +8,11 @@ from collections.abc import Iterable
 from dotenv import load_dotenv
 
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+# El corpus y las preguntas de los usuarios están en español. Este modelo
+# multilingüe conserva 384 dimensiones (compatibles con VECTOR(384)) y ofrece
+# una recuperación semántica mucho mejor para variantes como
+# "estacionamiento" / "parqueo".
+EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIMENSIONS = 384
 
 

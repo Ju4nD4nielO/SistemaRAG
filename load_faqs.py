@@ -2,7 +2,7 @@
 Script de carga (Persona 1 - HDT4).
 
 Lee el corpus de FAQs de Parachute S.A., genera un embedding por cada
-FAQ (pregunta + respuesta) con sentence-transformers, y hace un
+FAQ a partir de su pregunta con sentence-transformers, y hace un
 UPSERT a la tabla `faqs` en PostgreSQL/pgvector.
 
 Uso:
@@ -143,9 +143,12 @@ def main() -> None:
     print(f"Cargando modelo de embeddings: {EMBEDDING_MODEL_NAME}")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
 
-    # Se embebe pregunta + respuesta para que la búsqueda capture tanto la
-    # intención de la pregunta como el contenido real de la respuesta.
-    textos = [f"{faq.pregunta}\n{faq.respuesta}" for faq in faqs]
+    # El dump tiene respuestas con texto muy parecido entre FAQs. Embebemos la
+    # pregunta (la parte distintiva de cada entrada) para que variantes como
+    # "estacionamiento" encuentren "parqueo" sin que ese texto repetido
+    # domine la similitud. La respuesta completa sigue guardada en PostgreSQL
+    # y es la que se entrega al agente como evidencia.
+    textos = [faq.pregunta for faq in faqs]
     print("Generando embeddings...")
     embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
     if len(embeddings[0]) != EMBEDDING_DIMENSIONS:
