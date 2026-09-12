@@ -77,6 +77,11 @@ def _get_embedding_model() -> SentenceTransformer:
     return SentenceTransformer(EMBEDDING_MODEL_NAME)
 
 
+def prepare_faq_search() -> None:
+    """Carga el modelo de embeddings antes de iniciar el loop conversacional."""
+    _get_embedding_model()
+
+
 def _validate_search(pregunta: str, k: int) -> tuple[str, int]:
     if not isinstance(pregunta, str) or not pregunta.strip():
         raise ValueError("La pregunta debe contener texto.")

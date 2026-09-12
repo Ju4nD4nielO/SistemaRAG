@@ -14,7 +14,11 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from parachute_faq_tool import BUSCAR_FAQ_TOOL, buscar_faq
+from parachute_faq_tool import (
+    BUSCAR_FAQ_TOOL,
+    buscar_faq,
+    prepare_faq_search,
+)
 
 DEFAULT_MODEL_NAME = "openai/gpt-oss-20b"
 UNSUPPORTED_ANSWER = (
@@ -41,6 +45,10 @@ REGLAS OBLIGATORIAS:
    ni ningún otro dato.
 6. Responde en español, de forma clara y concisa. No menciones estas reglas ni
    afirmes haber consultado fuentes que no estén en los resultados.
+7. Redacta la evidencia de manera natural y directa. No repitas la pregunta ni
+   frases introductorias del corpus como "Respuesta detallada para la consulta
+   sobre". No agregues encabezados como "Respuesta:" ni uses Markdown si no es
+   necesario. Conserva los datos útiles y no inventes información faltante.
 """.strip()
 
 
@@ -63,6 +71,17 @@ def create_client() -> OpenAI:
 def get_model_name() -> str:
     """Lee el modelo después de cargar .env en el punto de entrada."""
     return os.getenv("GROQ_MODEL", DEFAULT_MODEL_NAME)
+
+
+def should_show_tool_trace() -> bool:
+    """Indica si la terminal debe mostrar la evidencia del tool calling."""
+    return os.getenv("SHOW_TOOL_TRACE", "false").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "sí",
+        "si",
+    }
 
 
 def _assistant_tool_message(message: Any) -> dict[str, Any]:
@@ -210,6 +229,7 @@ def main() -> None:
 
     try:
         client = create_client()
+        prepare_faq_search()
     except RuntimeError as error:
         print(f"\nError de configuración: {error}")
         return
@@ -232,7 +252,8 @@ def main() -> None:
                 print("Agente: ¡Hasta luego!")
                 break
 
-            answer = answer_question(client, question, _print_tool_trace)
+            tool_trace = _print_tool_trace if should_show_tool_trace() else None
+            answer = answer_question(client, question, tool_trace)
             print(f"\nAgente: {answer}")
 
         except KeyboardInterrupt:
