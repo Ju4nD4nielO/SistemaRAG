@@ -42,20 +42,26 @@ por defecto ya coinciden con `docker-compose.yml`):
 cp .env.example .env
 ```
 
-Además de las credenciales de PostgreSQL, agreguen una clave válida de Groq:
+Resumen de las variables disponibles:
 
-```dotenv
-GROQ_API_KEY=tu_api_key_de_groq
-# Opcional; por defecto se usa openai/gpt-oss-20b
-GROQ_MODEL=openai/gpt-oss-20b
-# Opcional; distancia coseno máxima que se considera evidencia válida
-FAQ_MAX_COSINE_DISTANCE=0.65
-```
+| Variable | Uso |
+| --- | --- |
+| `GROQ_API_KEY` | Clave necesaria para autenticar las solicitudes a Groq. |
+| `GROQ_MODEL` | Modelo de Groq utilizado para responder y realizar tool calling. |
+| `FAQ_MAX_COSINE_DISTANCE` | Descarta vecinos poco relevantes; calibren el valor si cambia el corpus o el modelo. |
+| `HF_HUB_DISABLE_PROGRESS_BARS` | Oculta las barras de progreso de Hugging Face Hub. |
+| `HF_HUB_DISABLE_SYMLINKS_WARNING` | Oculta la advertencia de symlinks en Windows. |
+| `HF_HUB_VERBOSITY` | Controla el nivel de mensajes emitidos por Hugging Face Hub. |
+| `TRANSFORMERS_VERBOSITY` | Controla el nivel de mensajes de la librería Transformers. |
+| `SHOW_TOOL_TRACE` | Con `true`, muestra en terminal los IDs de las FAQs recuperadas. |
+| `POSTGRES_HOST` | Dirección del servidor de PostgreSQL. |
+| `POSTGRES_PORT` | Puerto de conexión y puerto que Docker expone en la máquina. |
+| `POSTGRES_DB` | Nombre de la base de datos que almacena las FAQs. |
+| `POSTGRES_USER` | Usuario utilizado para conectarse a PostgreSQL. |
+| `POSTGRES_PASSWORD` | Contraseña del usuario de PostgreSQL. |
 
-`FAQ_MAX_COSINE_DISTANCE` es una defensa contra preguntas ajenas al corpus: una
-búsqueda vectorial siempre devuelve vecinos, pero solo se envían al agente los
-que están por debajo de ese umbral. Si cambian de modelo o corpus, calibren el
-valor con las preguntas de validación incluidas más abajo.
+Solo `GROQ_API_KEY` debe reemplazarse obligatoriamente. Los demás valores de
+`.env.example` funcionan con la configuración incluida en el repositorio.
 
 ### 3. Instalar dependencias de Python
 
@@ -141,6 +147,6 @@ de mensajes de function calling, incluido el rechazo cuando no hay evidencia.
 Para una pregunta con varias partes, prueben: “¿Cuál es el límite de peso y qué
 ocurre si hay mal clima?”. El agente debe limitarse a la evidencia recuperada.
 
-## Video de demostración
+## Video del funcionamiento del Agente
 
-Para ver el video de prueba haz click [aquí](https://youtu.be/vTC4lDADHNc)
+Para ver el video de prueba haz click [aquí](https://youtu.be/b2qYmD8pKPQ)
