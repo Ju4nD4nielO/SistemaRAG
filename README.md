@@ -143,38 +143,4 @@ ocurre si hay mal clima?”. El agente debe limitarse a la evidencia recuperada.
 
 ## Video de demostración
 
-El video debe ser breve y mostrar, en este orden:
-
-1. `docker compose up -d` y `python load_faqs.py Corpus_FAQs_Parachute_SA_2026.txt`.
-2. El `SELECT count(*) FROM faqs;` devolviendo 120.
-3. `python main.py`, una pregunta cubierta y la línea de traza
-   `[Herramienta] buscar_faq` seguida de la respuesta.
-4. Una pregunta fuera del dominio y el mensaje de rechazo.
-
-La traza de herramienta se dejó intencionalmente visible para que el video
-demuestre el tool calling sin necesidad de exponer claves ni prompts internos.
-
-### Esquema de la tabla
-
-```sql
-faqs (
-    id          TEXT PRIMARY KEY,   -- "FAQ-001", "FAQ-002", ...
-    categoria   TEXT NOT NULL,
-    pregunta    TEXT NOT NULL,
-    respuesta   TEXT NOT NULL,
-    metadata    JSONB,
-    embedding   VECTOR(384) NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-```
-
-Índice `ivfflat` sobre `embedding` con distancia coseno. La herramienta usa
-`ivfflat.probes = 10` para favorecer la recuperación completa del corpus
-actual y realiza consultas del estilo:
-
-```sql
-SELECT id, categoria, pregunta, respuesta
-FROM faqs
-ORDER BY embedding <=> %s::vector
-LIMIT 3;
-```
+Para ver el video de prueba haz click [aquí](https://youtu.be/vTC4lDADHNc)
