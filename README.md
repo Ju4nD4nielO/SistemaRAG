@@ -106,9 +106,9 @@ python main.py
 ```
 
 El agente conserva una sesión interactiva: escriban `Bye` o usen `Ctrl-C` para
-salir. Por cada pregunta imprime una línea `[Herramienta] buscar_faq` con los
-IDs recuperados; esa traza permite verificar que consulta PostgreSQL antes de
-producir la respuesta.
+salir. Si `SHOW_TOOL_TRACE=true`, también imprime una línea `[Herramienta]
+buscar_faq` con los IDs recuperados. La traza está desactivada por defecto y no
+afecta la consulta a PostgreSQL ni la respuesta del agente.
 
 El flujo es el siguiente:
 
