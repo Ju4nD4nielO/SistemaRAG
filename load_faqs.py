@@ -2,7 +2,7 @@
 Script de carga (Persona 1 - HDT4).
 
 Lee el corpus de FAQs de Parachute S.A., genera un embedding por cada
-FAQ (pregunta + respuesta) con sentence-transformers, y hace un
+FAQ a partir de su pregunta con sentence-transformers, y hace un
 UPSERT a la tabla `faqs` en PostgreSQL/pgvector.
 
 Uso:
@@ -15,21 +15,23 @@ mismo directorio.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+
+from parachute_vector_store import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL_NAME,
+    connect_to_faq_store,
+    to_pgvector_literal,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CORPUS = BASE_DIR / "Corpus_FAQs_Parachute_SA_2026.txt"
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"  # 384 dimensiones
-
 # Cada FAQ viene separada por una línea de guiones (>= 10 seguidos)
 BLOCK_SEPARATOR = re.compile(r"^-{10,}\s*$", re.MULTILINE)
 
@@ -84,22 +86,6 @@ def parse_corpus(path: Path) -> list[Faq]:
     return faqs
 
 
-def get_connection():
-    load_dotenv()
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
-        dbname=os.getenv("POSTGRES_DB", "parachute_faqs"),
-        user=os.getenv("POSTGRES_USER", "parachute"),
-        password=os.getenv("POSTGRES_PASSWORD", "parachute"),
-    )
-
-
-def _to_pgvector_literal(embedding) -> str:
-    """Convierte un array de floats al formato de texto que pgvector espera: '[0.1,0.2,...]'."""
-    return "[" + ",".join(f"{value:.8f}" for value in embedding) + "]"
-
-
 def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
     # Se castea explícitamente a ::vector porque psycopg2 no tiene un adaptador
     # nativo para el tipo `vector` de pgvector (evita depender del paquete extra
@@ -114,6 +100,11 @@ def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
             metadata  = EXCLUDED.metadata,
             embedding = EXCLUDED.embedding;
     """
+    if len(faqs) != len(embeddings):
+        raise ValueError(
+            "La cantidad de embeddings no coincide con la cantidad de FAQs."
+        )
+
     rows = [
         (
             faq.id,
@@ -121,7 +112,7 @@ def upsert_faqs(conn, faqs: list[Faq], embeddings) -> None:
             faq.pregunta,
             faq.respuesta,
             json.dumps(faq.metadata, ensure_ascii=False),
-            _to_pgvector_literal(embedding),
+            to_pgvector_literal(embedding),
         )
         for faq, embedding in zip(faqs, embeddings)
     ]
@@ -145,18 +136,30 @@ def main() -> None:
     if not faqs:
         print("No se encontraron FAQs válidas en el archivo. Abortando.")
         sys.exit(1)
+    if len({faq.id for faq in faqs}) != len(faqs):
+        print("El corpus contiene IDs de FAQ duplicados. Abortando.")
+        sys.exit(1)
 
     print(f"Cargando modelo de embeddings: {EMBEDDING_MODEL_NAME}")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
 
-    # Se embebe pregunta + respuesta para que la búsqueda capture tanto la
-    # intención de la pregunta como el contenido real de la respuesta.
-    textos = [f"{faq.pregunta}\n{faq.respuesta}" for faq in faqs]
+    # El dump tiene respuestas con texto muy parecido entre FAQs. Embebemos la
+    # pregunta (la parte distintiva de cada entrada) para que variantes como
+    # "estacionamiento" encuentren "parqueo" sin que ese texto repetido
+    # domine la similitud. La respuesta completa sigue guardada en PostgreSQL
+    # y es la que se entrega al agente como evidencia.
+    textos = [faq.pregunta for faq in faqs]
     print("Generando embeddings...")
     embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
+    if len(embeddings[0]) != EMBEDDING_DIMENSIONS:
+        print(
+            "El modelo generó embeddings con una dimensión inesperada: "
+            f"{len(embeddings[0])} (se esperaban {EMBEDDING_DIMENSIONS})."
+        )
+        sys.exit(1)
 
     print("Conectando a PostgreSQL...")
-    conn = get_connection()
+    conn = connect_to_faq_store()
     try:
         upsert_faqs(conn, faqs, embeddings)
         print(f"Carga completa: {len(faqs)} FAQs insertadas/actualizadas en la tabla 'faqs'.")
