@@ -15,11 +15,11 @@ CREATE TABLE IF NOT EXISTS faqs (
 );
 
 -- Índice para búsquedas de similitud por coseno (ivfflat).
--- lists=100 es razonable para corpus de hasta unos miles de filas;
--- con 120 FAQs igual funciona un exact scan, pero dejamos el índice listo.
+-- El corpus entregado tiene 120 filas; 10 listas evita particiones demasiado
+-- pequeñas. La herramienta configura probes=10 para priorizar recall.
 CREATE INDEX IF NOT EXISTS faqs_embedding_idx
     ON faqs
     USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+    WITH (lists = 10);
 
 CREATE INDEX IF NOT EXISTS faqs_categoria_idx ON faqs (categoria);
